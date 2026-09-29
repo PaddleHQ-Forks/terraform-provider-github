@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"slices"
 	"strconv"
+	"strings"
 
 	"github.com/google/go-github/v92/github"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
@@ -63,6 +64,7 @@ func resourceGithubEnterpriseOrganizationAppInstallation() *schema.Resource {
 					Type: schema.TypeString,
 				},
 				Optional:    true,
+				Set:         hashRepositoryName,
 				Description: "The names of the repositories the installation can access when 'repository_selection' is 'selected'.",
 			},
 			"installation_id": {
@@ -87,8 +89,10 @@ func resourceGithubEnterpriseOrganizationAppInstallation() *schema.Resource {
 				if !d.NewValueKnown("repository_selection") {
 					return true
 				}
-				oldValue, newValue := d.GetChange("repository_selection")
-				return oldValue.(string) == "none" || newValue.(string) == "none"
+				oldRaw, newRaw := d.GetChange("repository_selection")
+				oldValue, _ := oldRaw.(string)
+				newValue, _ := newRaw.(string)
+				return oldValue == "none" || newValue == "none"
 			}),
 			func(ctx context.Context, d *schema.ResourceDiff, meta any) error {
 				// Unknown values read back as their zero value, which would
@@ -97,8 +101,9 @@ func resourceGithubEnterpriseOrganizationAppInstallation() *schema.Resource {
 					return nil
 				}
 
-				selection := d.Get("repository_selection").(string)
-				repoCount := d.Get("selected_repositories").(*schema.Set).Len()
+				selection, _ := d.Get("repository_selection").(string)
+				selected, _ := d.Get("selected_repositories").(*schema.Set)
+				repoCount := selected.Len()
 				if selection == "selected" && repoCount == 0 {
 					return fmt.Errorf("'selected_repositories' must be set when 'repository_selection' is 'selected'")
 				}
@@ -112,13 +117,16 @@ func resourceGithubEnterpriseOrganizationAppInstallation() *schema.Resource {
 }
 
 func resourceGithubEnterpriseOrganizationAppInstallationCreate(ctx context.Context, d *schema.ResourceData, meta any) diag.Diagnostics {
-	client := meta.(*Owner).v3client
+	owner, _ := meta.(*Owner)
+	client := owner.v3client
 
-	enterpriseSlug := d.Get("enterprise_slug").(string)
-	org := d.Get("organization").(string)
-	clientID := d.Get("client_id").(string)
+	enterpriseSlug, _ := d.Get("enterprise_slug").(string)
+	org, _ := d.Get("organization").(string)
+	clientID, _ := d.Get("client_id").(string)
+	selection, _ := d.Get("repository_selection").(string)
 
-	repositories := expandStringList(d.Get("selected_repositories").(*schema.Set).List())
+	selected, _ := d.Get("selected_repositories").(*schema.Set)
+	repositories := expandStringList(selected.List())
 
 	// The install endpoint accepts at most maxInstallationRepositoriesPerRequest
 	// repositories; any remainder is granted with follow-up requests.
@@ -131,7 +139,7 @@ func resourceGithubEnterpriseOrganizationAppInstallationCreate(ctx context.Conte
 
 	req := github.InstallAppRequest{
 		ClientID:            clientID,
-		RepositorySelection: d.Get("repository_selection").(string),
+		RepositorySelection: selection,
 		Repositories:        initial,
 	}
 
@@ -169,7 +177,7 @@ func resourceGithubEnterpriseOrganizationAppInstallationCreate(ctx context.Conte
 }
 
 func resourceGithubEnterpriseOrganizationAppInstallationRead(ctx context.Context, d *schema.ResourceData, meta any) diag.Diagnostics {
-	owner := meta.(*Owner)
+	owner, _ := meta.(*Owner)
 	client := owner.v3client
 
 	enterpriseSlug, org, clientID, err := parseID3(d.Id())
@@ -234,26 +242,29 @@ func resourceGithubEnterpriseOrganizationAppInstallationRead(ctx context.Context
 }
 
 func resourceGithubEnterpriseOrganizationAppInstallationUpdate(ctx context.Context, d *schema.ResourceData, meta any) diag.Diagnostics {
-	client := meta.(*Owner).v3client
+	owner, _ := meta.(*Owner)
+	client := owner.v3client
 
 	enterpriseSlug, org, _, err := parseID3(d.Id())
 	if err != nil {
 		return diag.FromErr(err)
 	}
 
-	installationID, err := strconv.ParseInt(d.Get("installation_id").(string), 10, 64)
+	installationIDString, _ := d.Get("installation_id").(string)
+	installationID, err := strconv.ParseInt(installationIDString, 10, 64)
 	if err != nil {
-		return diag.FromErr(unconvertibleIdErr(d.Get("installation_id").(string), err))
+		return diag.FromErr(unconvertibleIdErr(installationIDString, err))
 	}
 
 	if d.HasChange("repository_selection") {
-		selection := d.Get("repository_selection").(string)
+		selection, _ := d.Get("repository_selection").(string)
 		req := github.UpdateAppInstallationRepositoriesRequest{
 			RepositorySelection: new(selection),
 		}
 		var remainder []string
 		if selection == "selected" {
-			repositories := expandStringList(d.Get("selected_repositories").(*schema.Set).List())
+			selected, _ := d.Get("selected_repositories").(*schema.Set)
+			repositories := expandStringList(selected.List())
 			// The toggle endpoint accepts at most
 			// maxInstallationRepositoriesPerRequest repositories; any remainder
 			// is granted with follow-up requests.
@@ -279,9 +290,9 @@ func resourceGithubEnterpriseOrganizationAppInstallationUpdate(ctx context.Conte
 			return diag.FromErr(err)
 		}
 	} else if d.HasChange("selected_repositories") {
-		oldRepos, newRepos := d.GetChange("selected_repositories")
-		oldSet := oldRepos.(*schema.Set)
-		newSet := newRepos.(*schema.Set)
+		oldRaw, newRaw := d.GetChange("selected_repositories")
+		oldSet, _ := oldRaw.(*schema.Set)
+		newSet, _ := newRaw.(*schema.Set)
 
 		// Add before removing so the installation never has an empty selection.
 		toAdd := expandStringList(newSet.Difference(oldSet).List())
@@ -308,16 +319,18 @@ func resourceGithubEnterpriseOrganizationAppInstallationUpdate(ctx context.Conte
 }
 
 func resourceGithubEnterpriseOrganizationAppInstallationDelete(ctx context.Context, d *schema.ResourceData, meta any) diag.Diagnostics {
-	client := meta.(*Owner).v3client
+	owner, _ := meta.(*Owner)
+	client := owner.v3client
 
 	enterpriseSlug, org, clientID, err := parseID3(d.Id())
 	if err != nil {
 		return diag.FromErr(err)
 	}
 
-	installationID, err := strconv.ParseInt(d.Get("installation_id").(string), 10, 64)
+	installationIDString, _ := d.Get("installation_id").(string)
+	installationID, err := strconv.ParseInt(installationIDString, 10, 64)
 	if err != nil {
-		return diag.FromErr(unconvertibleIdErr(d.Get("installation_id").(string), err))
+		return diag.FromErr(unconvertibleIdErr(installationIDString, err))
 	}
 
 	tflog.Debug(ctx, "Uninstalling app from enterprise-owned organization", map[string]any{
@@ -372,4 +385,11 @@ func findEnterpriseOrganizationAppInstallation(ctx context.Context, owner *Owner
 	}
 
 	return nil, nil
+}
+
+// hashRepositoryName hashes case-insensitively because GitHub repository names are; otherwise a
+// casing difference between config and the API would add and then revoke the same repository.
+func hashRepositoryName(v any) int {
+	name, _ := v.(string)
+	return schema.HashString(strings.ToLower(name))
 }
