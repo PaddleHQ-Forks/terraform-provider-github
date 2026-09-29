@@ -75,6 +75,13 @@ func Test_diffRepositoryNames(t *testing.T) {
 			expectedRemoves: nil,
 		},
 		{
+			testName:        "case_insensitive_no_change",
+			current:         []string{"Repo-A", "repo-b"},
+			desired:         []string{"repo-a", "REPO-B"},
+			expectedToAdd:   nil,
+			expectedRemoves: nil,
+		},
+		{
 			testName:        "adds_only",
 			current:         []string{"repo-a"},
 			desired:         []string{"repo-a", "repo-b"},
@@ -125,4 +132,15 @@ func repoNames(n int) []string {
 		names[i] = "repo-" + string(rune('a'+i%26)) + string(rune('0'+i/26))
 	}
 	return names
+}
+
+func Test_hashRepositoryName(t *testing.T) {
+	t.Parallel()
+
+	if hashRepositoryName("Paddle-Config") != hashRepositoryName("paddle-config") {
+		t.Fatal("expected repository names differing only in case to hash equally")
+	}
+	if hashRepositoryName("repo-a") == hashRepositoryName("repo-b") {
+		t.Fatal("expected different repository names to hash differently")
+	}
 }

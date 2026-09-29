@@ -32,4 +32,6 @@ This resource can be imported using an ID made up of `enterprise_slug`, `organiz
 terraform import github_enterprise_app_installation_repositories.some_app_repos my-enterprise:my-organization:1234567
 ```
 
+~> **Note**: This resource is authoritative for the installation's repository access. When `repository_selection` is `selected`, any repository granted to the installation but not listed in `selected_repositories` is removed on apply, including when the resource is first created or imported. Repository names are compared case-insensitively.
+
 ~> **Note**: Deleting this resource when `repository_selection` is `selected` removes the managed `selected_repositories` from the installation. Deleting it when `repository_selection` is `all` does nothing: the app installation and its access to all repositories are left untouched. In neither case is the app uninstalled from the organization.

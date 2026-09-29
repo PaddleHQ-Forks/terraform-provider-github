@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"strings"
 
 	"github.com/google/go-github/v92/github"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
@@ -61,7 +62,7 @@ func resourceGithubEnterpriseAppInstallationRepositories() *schema.Resource {
 				Elem: &schema.Schema{
 					Type: schema.TypeString,
 				},
-				Set:         schema.HashString,
+				Set:         hashRepositoryName,
 				Optional:    true,
 				Description: "Names of the repositories the installation can access. Must be empty when `repository_selection` is `all`, and must contain at least one repository when `repository_selection` is `selected`.",
 			},
@@ -338,28 +339,36 @@ func chunkRepositoryNames(names []string, size int) [][]string {
 
 // diffRepositoryNames compares the currently granted repository names against
 // the desired set, returning the names to add and the names to remove.
+// Repository names are case-insensitive, so a case-only difference is no change.
 func diffRepositoryNames(current, desired []string) (toAdd, toRemove []string) {
 	currentSet := make(map[string]struct{}, len(current))
 	for _, name := range current {
-		currentSet[name] = struct{}{}
+		currentSet[strings.ToLower(name)] = struct{}{}
 	}
 
 	desiredSet := make(map[string]struct{}, len(desired))
 	for _, name := range desired {
-		desiredSet[name] = struct{}{}
+		desiredSet[strings.ToLower(name)] = struct{}{}
 	}
 
 	for _, name := range desired {
-		if _, ok := currentSet[name]; !ok {
+		if _, ok := currentSet[strings.ToLower(name)]; !ok {
 			toAdd = append(toAdd, name)
 		}
 	}
 
 	for _, name := range current {
-		if _, ok := desiredSet[name]; !ok {
+		if _, ok := desiredSet[strings.ToLower(name)]; !ok {
 			toRemove = append(toRemove, name)
 		}
 	}
 
 	return toAdd, toRemove
+}
+
+// hashRepositoryName hashes repository names case-insensitively, so the API's
+// canonical casing and the configured casing are the same set element.
+func hashRepositoryName(v any) int {
+	name, _ := v.(string)
+	return schema.HashString(strings.ToLower(name))
 }
